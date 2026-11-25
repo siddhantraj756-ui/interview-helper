@@ -225,7 +225,7 @@ Released under the MIT License. See [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
-- Google Gemini for the AI reasoning
+<!-- - Google Gemini for the AI reasoning
 - Azure Speech and OpenAI Whisper for optional voice input
 - Electron for the cross platform desktop runtime
 - [Vysper by varun-singhh](https://github.com/varun-singhh/Vysper) for UI and structure inspiration
@@ -234,4 +234,4 @@ Released under the MIT License. See [LICENSE](LICENSE) for details.
 
 Built by [TechyCSR](https://techycsr.dev). If OpenCluely helped you, consider giving it a star ⭐
 
-</div>
+</div> -->
