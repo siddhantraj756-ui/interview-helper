@@ -123,7 +123,8 @@ jobs:
 
           PREV_TAG=$(git describe --tags --abbrev=0 "${CURRENT_TAG}^" 2>/dev/null || true)
           if [ -z "$PREV_TAG" ]; then
-            PREV_TAG=$(git tag --sort=-creatordate | grep -vx "${CURRENT_TAG}" | while read -r t; do
+            PREV_TAG=$(git tag --sort=-creatordate | while read -r t; do
+              if [ "$t" = "${CURRENT_TAG}" ]; then continue; fi
               if git merge-base --is-ancestor "$t" "${CURRENT_TAG}" 2>/dev/null; then echo "$t"; break; fi
             done | head -1)
           fi
