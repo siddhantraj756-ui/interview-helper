@@ -150,6 +150,14 @@ class ChatWindowUI {
                 if (data && data.response) {
                     // Hide thinking indicator
                     this.hideThinkingIndicator();
+                    const metadata = data.metadata || {};
+                    const timing = [];
+                    if (metadata.transcriptionProcessingMs != null) timing.push(`Transcription ${(metadata.transcriptionProcessingMs / 1000).toFixed(1)}s`);
+                    if (metadata.provider) timing.push(metadata.provider);
+                    if (metadata.model) timing.push(metadata.model);
+                    if (metadata.processingTime != null) timing.push(`LLM ${(metadata.processingTime / 1000).toFixed(1)}s`);
+                    if (metadata.timeToFirstTokenMs != null) timing.push(`First token ${(metadata.timeToFirstTokenMs / 1000).toFixed(1)}s`);
+                    if (timing.length) this.addMessage(timing.join(' · '), 'system');
                     // Finalize the streaming bubble (if any) with fully formatted
                     // markdown + code snippets; otherwise render fresh.
                     this.finalizeStreamingResponse(data.messageId, data.response);
@@ -168,7 +176,8 @@ class ChatWindowUI {
             if (window.electronAPI.onTranscriptionLlmResponseChunk) {
                 window.electronAPI.onTranscriptionLlmResponseChunk((event, data) => {
                     if (data && data.messageId) {
-                        this.appendStreamingChunk(data.messageId, data.delta || '');
+                        if (data.reset) this.resetStreamingResponse(data.messageId);
+                        else this.appendStreamingChunk(data.messageId, data.delta || '');
                     }
                 });
             }
@@ -423,6 +432,14 @@ class ChatWindowUI {
         if (atBottom) {
             this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
         }
+    }
+
+    resetStreamingResponse(messageId) {
+        const message = this.elements.chatMessages &&
+            this.elements.chatMessages.querySelector(`[data-stream-id="${messageId}"]`);
+        if (message) message.remove();
+        if (this._streamBuffers) delete this._streamBuffers[messageId];
+        this.beginStreamingResponse(messageId);
     }
 
     // Replace the streaming bubble with the formatted final response (markdown

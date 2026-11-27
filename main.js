@@ -100,6 +100,19 @@ process.on("unhandledRejection", (reason) => {
 const captureService = require("./src/services/capture.service");
 const speechService = require("./src/services/speech.service");
 const llmService = require("./src/services/llm.service");
+const CredentialStore = require("./src/services/credential-store");
+const ProviderManager = require("./src/services/provider-manager");
+const { sumTranscriptionProcessingMs } = require("./src/services/timing");
+const credentialStore = new CredentialStore();
+const providerManager = new ProviderManager({
+  geminiService: llmService,
+  credentialStore,
+  getCandidateContext: () => ({
+    candidateContext: process.env.PERSONAL_DETAILS || '',
+    resume: process.env.CANDIDATE_RESUME || '',
+    jobDescription: process.env.JOB_DESCRIPTION || ''
+  })
+});
 
 // Managers
 const windowManager = require("./src/managers/window.manager");
@@ -345,8 +358,8 @@ class ApplicationController {
     });
 
     // Wire speech transcript events to remote clients
-    speechService.on('transcription', (text) => {
-      this.handleTranscriptionFragment(text);
+    speechService.on('transcription', (text, timing) => {
+      this.handleTranscriptionFragment(text, timing);
     });
     speechService.on('interim-transcription', () => { /* ignored in headless mode */ });
     speechService.on('status', (status) => {
@@ -979,14 +992,30 @@ class ApplicationController {
       }
       const text = typeof submission === "string" ? submission : submission && submission.text;
       const transcriptThroughId = Number(submission && submission.transcriptThroughId) || 0;
+      const transcriptionProcessingMs = Number.isFinite(Number(submission && submission.transcriptionProcessingMs))
+        ? Number(submission.transcriptionProcessingMs) : null;
+      const requestId = typeof (submission && submission.requestId) === "string"
+        && /^[\w-]{16,80}$/.test(submission.requestId) ? submission.requestId : randomUUID();
+      const captureSessionId = typeof (submission && submission.captureSessionId) === "string"
+        ? submission.captureSessionId : null;
       const submittedText = String(text || "").trim();
       if (!submittedText) return { success: false, reason: "empty submission" };
+      this.performanceTracker.ensure(requestId, {
+        speechProvider: speechService.getStatus().provider || "unknown",
+        llmProvider: providerManager.getStatus().preferredProvider,
+        captureSessionId
+      });
+      if (!this.performanceTracker.claimSubmission(requestId)) {
+        this.performanceTracker.record(requestId, "duplicate_llm_submission_ignored");
+        return { success: false, reason: "duplicate submission", requestId };
+      }
       if (transcriptThroughId > 0) {
         this._pendingSpeechTranscripts = this._pendingSpeechTranscripts.filter(
           (entry) => entry.id > transcriptThroughId
         );
       }
-      logger.info("Explicit chat Submit received", { textLength: submittedText.length });
+      this.performanceTracker.transition(requestId, "submitting_to_llm");
+      logger.info("Explicit chat Submit received", { requestId, textLength: submittedText.length });
 
       // Typed messages need the full skill pipeline (with history context),
       // NOT the voice "intelligent filter" pipeline. Voice keeps its filter
@@ -995,11 +1024,16 @@ class ApplicationController {
       (async () => {
         try {
           const sessionHistory = sessionManager.getOptimizedHistory();
-          await this.processWithLLM(submittedText, sessionHistory);
+          await this.processWithLLM(submittedText, sessionHistory, {
+            requestId,
+            captureSessionId,
+            transcriptionProcessingMs
+          });
         } catch (error) {
           logger.error("Failed to process chat message with LLM", {
             error: error.message,
-            text: submittedText.substring(0, 100)
+            requestId,
+            textLength: submittedText.length
           });
         }
       })();
@@ -1054,7 +1088,30 @@ class ApplicationController {
     });
 
     ipcMain.handle("test-gemini-connection", async () => {
-      return await llmService.testConnection();
+      return providerManager.testGemini('paid');
+    });
+    ipcMain.handle("save-provider-credentials", (_event, entries) => {
+      const safeEntries = {};
+      for (const name of ['openai', 'geminiPaid', 'geminiFree']) {
+        if (Object.prototype.hasOwnProperty.call(entries || {}, name)) {
+          const value = entries[name];
+          if (value === null || (typeof value === 'string' && value.trim())) safeEntries[name] = value;
+        }
+      }
+      const removedEnv = {};
+      if (safeEntries.openai === null) removedEnv.OPENAI_API_KEY = '';
+      if (safeEntries.geminiPaid === null) {
+        removedEnv.GEMINI_PAID_API_KEY = '';
+        removedEnv.GEMINI_API_KEY = '';
+      }
+      if (safeEntries.geminiFree === null) removedEnv.GEMINI_FREE_API_KEY = '';
+      const saved = credentialStore.save(safeEntries);
+      if (Object.keys(removedEnv).length) this.persistEnvUpdates(removedEnv);
+      return { success: true, saved, status: providerManager.getStatus() };
+    });
+    ipcMain.handle("test-openai-connection", () => providerManager.testOpenAI());
+    ipcMain.handle("test-gemini-key", (_event, tier = 'paid') => {
+      return providerManager.testGemini(tier);
     });
 
     ipcMain.handle("run-gemini-diagnostics", async () => {
@@ -1101,7 +1158,13 @@ class ApplicationController {
     // to show the welcome banner / prompt for API-key entry.
     ipcMain.handle("get-first-run-status", () => {
       try {
-        return this.firstRunManager.getStatus();
+        const status = this.firstRunManager.getStatus();
+        const providers = providerManager.getStatus().configured;
+        status.openaiConfigured = providers.openai;
+        status.geminiConfigured = providers.geminiPaid;
+        status.needsOnboarding = !status.sentinelExists || !status.envExists
+          || !(providers.openai || providers.geminiPaid || providers.geminiFree);
+        return status;
       } catch (e) {
         logger.warn("Failed to get first-run status", { error: e.message });
         return { needsOnboarding: false, error: e.message };
@@ -1468,18 +1531,20 @@ class ApplicationController {
         skill: this.activeSkill
       });
 
-      const llmResult = await llmService.processImageWithSkillStream(
+      const llmResult = await providerManager.processImageWithSkillStream(
         capture.imageBuffer,
         capture.mimeType || 'image/png',
         this.activeSkill,
         sessionHistory.recent,
         needsProgrammingLanguage ? this.codingLanguage : null,
         (delta) => {
-          windowManager.broadcastToAllWindows("transcription-llm-response-chunk", {
-            messageId,
-            delta
-          });
-        }
+          if (delta && typeof delta === 'object' && delta.reset) {
+            windowManager.broadcastToAllWindows("transcription-llm-response-chunk", { messageId, reset: true });
+          } else {
+            windowManager.broadcastToAllWindows("transcription-llm-response-chunk", { messageId, delta });
+          }
+        },
+        { onReset: () => windowManager.broadcastToAllWindows("transcription-llm-response-chunk", { messageId, reset: true }) }
       );
       llmResult.metadata = { ...llmResult.metadata, messageId };
 
@@ -1494,8 +1559,7 @@ class ApplicationController {
 
       windowManager.showLLMResponse(llmResult.response, {
         skill: this.activeSkill,
-        processingTime: llmResult.metadata.processingTime,
-        usedFallback: llmResult.metadata.usedFallback,
+        ...llmResult.metadata,
         isImageAnalysis: true
       });
     } catch (error) {
@@ -1518,7 +1582,17 @@ class ApplicationController {
     }
   }
 
-  async processWithLLM(text, sessionHistory) {
+  async processWithLLM(text, sessionHistory, timing = {}) {
+    const requestId = timing.requestId || randomUUID();
+    this.performanceTracker.ensure(requestId, {
+      speechProvider: speechService.getStatus().provider || "unknown",
+      llmProvider: providerManager.getStatus().preferredProvider,
+      captureSessionId: timing.captureSessionId || null
+    });
+    const currentWorkflowState = this.performanceTracker.getState(requestId);
+    if (["idle", "listening", "transcribing"].includes(currentWorkflowState)) {
+      this.performanceTracker.transition(requestId, "submitting_to_llm");
+    }
     try {
       // Add user input to session memory
       sessionManager.addUserInput(text, 'llm_input');
@@ -1537,27 +1611,44 @@ class ApplicationController {
 
       windowManager.broadcastToAllWindows("transcription-llm-response-start", {
         messageId,
+        requestId,
         skill: this.activeSkill
       });
       windowManager.showLLMLoading();
 
-      const llmResult = await llmService.processTextWithSkillStream(
+      const llmResult = await providerManager.processTextWithSkillStream(
         text,
         this.activeSkill,
         sessionHistory.recent,
         needsProgrammingLanguage ? this.codingLanguage : null,
         (delta) => {
-          // Forward chunk to remote clients
-          if (this.remoteService) {
-            this.remoteService.onLLMResponseChunk(messageId, delta);
+          if (delta && typeof delta === 'object' && delta.reset) {
+            windowManager.broadcastToAllWindows("transcription-llm-response-chunk", { messageId, requestId, reset: true });
+          } else {
+            if (this.remoteService) this.remoteService.onLLMResponseChunk(messageId, delta);
+            windowManager.broadcastToAllWindows("transcription-llm-response-chunk", { messageId, requestId, delta });
           }
-          windowManager.broadcastToAllWindows("transcription-llm-response-chunk", {
-            messageId,
-            delta
-          });
+        },
+        {
+          requestId,
+          onRequestStart: (provider) => {
+            this.performanceTracker.recordStage(requestId, "llm_request_submitted", { llmProvider: provider, provider });
+          },
+          onFirstToken: (provider) => {
+            this.performanceTracker.recordStage(requestId, "llm_first_token_received", { llmProvider: provider, provider });
+            this.performanceTracker.transition(requestId, "receiving_response");
+          },
+          onReset: () => windowManager.broadcastToAllWindows("transcription-llm-response-chunk", { messageId, requestId, reset: true })
         }
       );
-      llmResult.metadata = { ...llmResult.metadata, messageId };
+      llmResult.metadata.transcriptionProcessingMs = timing.transcriptionProcessingMs;
+      llmResult.metadata = { ...llmResult.metadata, messageId, requestId };
+      this.performanceTracker.recordStage(requestId, "llm_response_completed", {
+        llmProvider: llmResult.metadata.provider,
+        provider: llmResult.metadata.provider,
+        durationMs: llmResult.metadata.processingTime
+      });
+      this.performanceTracker.transition(requestId, "completed");
 
       // Notify remote clients that streaming is complete
       if (this.remoteService) {
@@ -1569,7 +1660,7 @@ class ApplicationController {
         skill: this.activeSkill,
         programmingLanguage: needsProgrammingLanguage ? this.codingLanguage : 'not applicable',
         processingTime: llmResult.metadata.processingTime,
-        responsePreview: llmResult.response.substring(0, 200) + "...",
+        requestId,
       });
 
       // Add LLM response to session memory
@@ -1583,13 +1674,15 @@ class ApplicationController {
 
       windowManager.showLLMResponse(llmResult.response, {
         skill: this.activeSkill,
-        processingTime: llmResult.metadata.processingTime,
-        usedFallback: llmResult.metadata.usedFallback,
+        ...llmResult.metadata,
       });
     } catch (error) {
+      this.performanceTracker.record(requestId, "llm_error", { error });
+      this.performanceTracker.transition(requestId, "error");
       logger.error("LLM processing failed", {
         error: error.message,
         skill: this.activeSkill,
+        requestId,
       });
 
       windowManager.hideLLMResponse();
@@ -1603,7 +1696,7 @@ class ApplicationController {
         }
       });
 
-      this.broadcastLLMError(error.message);
+      this.broadcastLLMError(error.message, { requestId });
     }
   }
 
@@ -1611,7 +1704,7 @@ class ApplicationController {
    * Buffer finalized speech for the explicit Submit action. Transcription
    * updates the UI, but it never starts an LLM request on its own.
    */
-  handleTranscriptionFragment(text) {
+  handleTranscriptionFragment(text, timing = {}, requestId = this._activeAudioRequestId) {
     const fragment = (text || "").trim();
     if (!fragment) {
       return;
@@ -1621,9 +1714,16 @@ class ApplicationController {
     // Keep unsubmitted speech out of session memory and away from the LLM.
     // Retain it in main so Submit can retrieve one consistent text snapshot,
     // even when the response target hides live transcript bubbles in chat.
-    const entry = { id: ++this._speechTranscriptSequence, text: fragment };
+    const entry = { id: ++this._speechTranscriptSequence, text: fragment, requestId, ...(timing || {}) };
+    if (requestId) {
+      this.performanceTracker.recordStage(requestId, "final_transcription_fragment_received", {
+        textLength: fragment.length,
+        durationMs: Number.isFinite(timing && timing.processingTimeMs) ? timing.processingTimeMs : undefined
+      });
+    }
     this._pendingSpeechTranscripts.push(entry);
     logger.info("Speech transcript buffered for explicit Submit", {
+      requestId,
       transcriptId: entry.id,
       textLength: fragment.length,
       pendingTranscriptCount: this._pendingSpeechTranscripts.length
@@ -1656,15 +1756,16 @@ class ApplicationController {
       responseLength: llmResult.response.length,
       skill: this.activeSkill,
       dataKeys: Object.keys(broadcastData),
-      responsePreview: llmResult.response.substring(0, 100) + "...",
+      requestId: llmResult.metadata && llmResult.metadata.requestId,
     });
 
     windowManager.broadcastToAllWindows("llm-response", broadcastData);
   }
 
-  broadcastLLMError(errorMessage) {
+  broadcastLLMError(errorMessage, metadata = {}) {
     windowManager.broadcastToAllWindows("llm-error", {
       error: errorMessage,
+      ...metadata,
       timestamp: new Date().toISOString(),
     });
     // Forward to remote clients in Linux headless mode
@@ -1678,6 +1779,7 @@ class ApplicationController {
       response: llmResult.response,
       metadata: llmResult.metadata,
       messageId: llmResult.metadata && llmResult.metadata.messageId,
+      requestId: llmResult.metadata && llmResult.metadata.requestId,
       skill: this.activeSkill,
       isTranscriptionResponse: true
     };
@@ -1685,7 +1787,7 @@ class ApplicationController {
     logger.info("Broadcasting transcription LLM response to all windows", {
       responseLength: llmResult.response.length,
       skill: this.activeSkill,
-      responsePreview: llmResult.response.substring(0, 100) + "..."
+      requestId: llmResult.metadata && llmResult.metadata.requestId
     });
 
     windowManager.broadcastToAllWindows("transcription-llm-response", broadcastData);
@@ -1830,8 +1932,15 @@ class ApplicationController {
         (process.env.WHISPER_MANUAL_CAPTURE === "true" ? "manual" : "vad"),
       whisperResponseTarget: process.env.WHISPER_RESPONSE_TARGET || "both",
       whisperSegmentMs: process.env.WHISPER_SEGMENT_MS || "4000",
-      geminiKey: process.env.GEMINI_API_KEY || "",
+      geminiKey: "",
+      openaiModel: providerManager.openai.model,
+      providerStatus: providerManager.getStatus(),
+      openaiConfigured: providerManager.getStatus().configured.openai,
+      geminiPaidConfigured: providerManager.getStatus().configured.geminiPaid,
+      geminiFreeConfigured: providerManager.getStatus().configured.geminiFree,
       personalDetails: process.env.PERSONAL_DETAILS || "",
+      candidateResume: process.env.CANDIDATE_RESUME || "",
+      jobDescription: process.env.JOB_DESCRIPTION || "",
 
       azureConfigured: !!process.env.AZURE_SPEECH_KEY && !!process.env.AZURE_SPEECH_REGION,
       speechAvailable: this.speechAvailable
@@ -1906,6 +2015,15 @@ class ApplicationController {
       if (settings.personalDetails !== undefined) {
         envUpdates.PERSONAL_DETAILS = settings.personalDetails;
       }
+      if (settings.candidateResume !== undefined) envUpdates.CANDIDATE_RESUME = settings.candidateResume;
+      if (settings.jobDescription !== undefined) envUpdates.JOB_DESCRIPTION = settings.jobDescription;
+      if (settings.openaiModel !== undefined) {
+        const model = String(settings.openaiModel || '').trim();
+        if (model) {
+          envUpdates.OPENAI_MODEL = model;
+          providerManager.openai.model = model;
+        }
+      }
 
       // Capture the previous whisper command BEFORE persisting — persistEnvUpdates
       // mutates process.env in place, so comparing afterwards would always read
@@ -1967,10 +2085,7 @@ class ApplicationController {
         }
       }
 
-      logger.info("Settings saved successfully", {
-        ...settings,
-        persistedEnvKeys: persistedKeys
-      });
+      logger.info("Settings saved successfully", { fields: Object.keys(settings), persistedEnvKeys: persistedKeys });
       return { success: true, persistedEnvKeys: persistedKeys };
     } catch (error) {
       logger.error("Failed to save settings", { error: error.message });

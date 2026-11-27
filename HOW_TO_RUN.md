@@ -43,5 +43,5 @@ Now that you're in the right folder, type the following commands one by one.
 ## You're Done! 🎉
 OpenCluely should now pop up on your screen. 
 
-> **Important Setup Note:** 
-> When the app opens, you will need to enter your **Gemini API Key** in the settings. This is a special password that lets the AI answer your questions. You can get one for free at [Google AI Studio](https://aistudio.google.com/app/apikey).
+> **AI provider setup:**
+> OpenAI is preferred when configured. You can add an OpenAI key in Settings and keep Gemini as a fallback. Gemini continues to work with your existing `GEMINI_API_KEY`; separate paid and free fallback keys can be added in Settings. A Gemini key does not reveal whether its project is paid or free, so label the projects yourself. New keys entered in Settings are encrypted with Electron's OS-backed secure storage. See [PROVIDER_SETUP.md](PROVIDER_SETUP.md) for fallback behavior and production notes.

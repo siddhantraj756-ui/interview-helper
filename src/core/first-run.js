@@ -8,7 +8,7 @@ const os = require('os');
  * Responsibilities:
  *   - Decide whether this is the user's first launch of OpenCluely
  *   - Auto-create a default `.env` from `env.example` if one is missing
- *   - Report whether a Gemini API key is configured (the only required key)
+ *   - Report whether an OpenAI or Gemini API key is configured
  *   - Persist a "first-run completed" sentinel so we don't nag on every launch
  *
  * The settings UI is the source of truth for API-key entry. This module
@@ -25,14 +25,17 @@ class FirstRunManager {
 
   /**
    * Returns true if this looks like a fresh install — no .env, no
-   * sentinel file, or .env exists but has no Gemini key.
+   * sentinel file, or .env exists but has no LLM provider key.
    */
   needsOnboarding() {
     if (!fs.existsSync(this.sentinelPath)) return true;
     if (!fs.existsSync(this.envPath)) return true;
     const content = this._readEnv();
     const gemini = (content.GEMINI_API_KEY || '').trim();
-    return !gemini || gemini === 'your_gemini_api_key_here';
+    const openai = (content.OPENAI_API_KEY || '').trim();
+    const geminiConfigured = !!gemini && gemini !== 'your_gemini_api_key_here';
+    const openaiConfigured = !!openai && openai !== 'your_openai_api_key_here';
+    return !geminiConfigured && !openaiConfigured;
   }
 
   /**
@@ -80,10 +83,12 @@ class FirstRunManager {
   getStatus() {
     const env = this._readEnv();
     const gemini = (env.GEMINI_API_KEY || '').trim();
+    const openai = (env.OPENAI_API_KEY || '').trim();
     return {
       envExists: fs.existsSync(this.envPath),
       sentinelExists: fs.existsSync(this.sentinelPath),
       geminiConfigured: !!gemini && gemini !== 'your_gemini_api_key_here',
+      openaiConfigured: !!openai && openai !== 'your_openai_api_key_here',
       azureConfigured: !!(env.AZURE_SPEECH_KEY || '').trim() && !!(env.AZURE_SPEECH_REGION || '').trim(),
       whisperConfigured: !!(env.WHISPER_COMMAND || '').trim(),
       needsOnboarding: this.needsOnboarding()

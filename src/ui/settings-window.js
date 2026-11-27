@@ -17,6 +17,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const whisperResponseTargetSelect = document.getElementById('whisperResponseTarget');
     const whisperSegmentMsInput = document.getElementById('whisperSegmentMs');
     const geminiKeyInput = document.getElementById('geminiKey');
+    const openaiKeyInput = document.getElementById('openaiKey');
+    const geminiPaidKeyInput = document.getElementById('geminiPaidKey');
+    const geminiFreeKeyInput = document.getElementById('geminiFreeKey');
+    const openaiModelInput = document.getElementById('openaiModel');
+    const candidateResumeInput = document.getElementById('candidateResume');
+    const jobDescriptionInput = document.getElementById('jobDescription');
     const windowGapInput = document.getElementById('windowGap');
     const codingLanguageSelect = document.getElementById('codingLanguage');
     const activeSkillSelect = document.getElementById('activeSkill');
@@ -88,7 +94,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (whisperCaptureModeSelect) whisperCaptureModeSelect.value = settings.whisperCaptureMode || 'vad';
         if (whisperResponseTargetSelect) whisperResponseTargetSelect.value = settings.whisperResponseTarget || 'both';
         if (whisperSegmentMsInput) whisperSegmentMsInput.value = settings.whisperSegmentMs || '';
-        if (geminiKeyInput) geminiKeyInput.value = settings.geminiKey || '';
+        if (geminiKeyInput) geminiKeyInput.value = '';
+        if (openaiKeyInput) openaiKeyInput.value = '';
+        if (geminiPaidKeyInput) geminiPaidKeyInput.value = '';
+        if (geminiFreeKeyInput) geminiFreeKeyInput.value = '';
+        if (openaiModelInput) openaiModelInput.value = settings.openaiModel || 'gpt-6.2-sol';
         if (windowGapInput) windowGapInput.value = settings.windowGap || '';
 
         // Set C++ as default if no coding language is specified
@@ -98,6 +108,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (settings.activeSkill && activeSkillSelect) activeSkillSelect.value = settings.activeSkill;
         if (personalDetailsInput) personalDetailsInput.value = settings.personalDetails || '';
+        if (candidateResumeInput) candidateResumeInput.value = settings.candidateResume || '';
+        if (jobDescriptionInput) jobDescriptionInput.value = settings.jobDescription || '';
+        setConfiguredStatus('openaiStatus', !!settings.openaiConfigured);
+        setConfiguredStatus('geminiPaidStatus', !!settings.geminiPaidConfigured);
+        setConfiguredStatus('geminiFreeStatus', !!settings.geminiFreeConfigured);
+        const providerStatus = document.getElementById('providerSummary');
+        if (providerStatus) providerStatus.textContent = `Preferred provider: ${settings.providerStatus?.preferredProvider || 'Not configured'}. Fallback order: OpenAI → Paid Gemini → Free Gemini.`;
 
         // Handle icon selection
         const selectedIcon = settings.selectedIcon || settings.appIcon;
@@ -148,14 +165,69 @@ document.addEventListener('DOMContentLoaded', () => {
         if (whisperCaptureModeSelect) settings.whisperCaptureMode = whisperCaptureModeSelect.value;
         if (whisperResponseTargetSelect) settings.whisperResponseTarget = whisperResponseTargetSelect.value;
         if (whisperSegmentMsInput) settings.whisperSegmentMs = whisperSegmentMsInput.value;
-        if (geminiKeyInput) settings.geminiKey = geminiKeyInput.value;
+        if (openaiModelInput) settings.openaiModel = openaiModelInput.value;
         if (windowGapInput) settings.windowGap = windowGapInput.value;
         if (codingLanguageSelect) settings.codingLanguage = codingLanguageSelect.value;
         if (activeSkillSelect) settings.activeSkill = activeSkillSelect.value;
         if (personalDetailsInput) settings.personalDetails = personalDetailsInput.value;
+        if (candidateResumeInput) settings.candidateResume = candidateResumeInput.value;
+        if (jobDescriptionInput) settings.jobDescription = jobDescriptionInput.value;
         
         window.api.send('save-settings', settings);
     };
+
+    function setConfiguredStatus(id, configured, detail = '') {
+        const element = document.getElementById(id);
+        if (element) element.textContent = detail || (configured ? 'Configured' : 'Not configured');
+    }
+
+    const providerInputs = { openai: openaiKeyInput, geminiPaid: geminiPaidKeyInput, geminiFree: geminiFreeKeyInput };
+    const providerStatusIds = { openai: 'openaiStatus', geminiPaid: 'geminiPaidStatus', geminiFree: 'geminiFreeStatus' };
+    for (const [provider, input] of Object.entries(providerInputs)) {
+        if (!input) continue;
+        const title = provider === 'openai' ? 'OpenAI' : provider === 'geminiPaid' ? 'Paid Gemini' : 'Free Gemini';
+        document.getElementById(`save${provider === 'openai' ? 'OpenAI' : provider === 'geminiPaid' ? 'GeminiPaid' : 'GeminiFree'}`)
+            ?.addEventListener('click', async () => {
+                if (!input.value.trim()) { setConfiguredStatus(providerStatusIds[provider], false, 'Enter a key to save or update.'); return; }
+                try {
+                    await window.electronAPI.saveProviderCredentials({ [provider]: input.value });
+                    input.value = '';
+                    const statuses = await window.electronAPI.getSettings();
+                    setConfiguredStatus(providerStatusIds[provider], !!statuses[`${provider}Configured`], `${title} key saved securely`);
+                    if (provider === 'openai') setConfiguredStatus('openaiStatus', true, `${title} key saved securely`);
+                    const summary = document.getElementById('providerSummary');
+                    if (summary) summary.textContent = `Preferred provider: ${statuses.providerStatus?.preferredProvider || title}. Fallback order: OpenAI → Paid Gemini → Free Gemini.`;
+                } catch (error) { setConfiguredStatus(providerStatusIds[provider], false, error.message || 'Could not save key securely.'); }
+            });
+        document.getElementById(`remove${provider === 'openai' ? 'OpenAI' : provider === 'geminiPaid' ? 'GeminiPaid' : 'GeminiFree'}`)
+            ?.addEventListener('click', async () => {
+                try {
+                    await window.electronAPI.saveProviderCredentials({ [provider]: null });
+                    const statuses = await window.electronAPI.getSettings();
+                    setConfiguredStatus(providerStatusIds[provider], !!statuses[`${provider}Configured`]);
+                    const summary = document.getElementById('providerSummary');
+                    if (summary) summary.textContent = `Preferred provider: ${statuses.providerStatus?.preferredProvider || 'Not configured'}. Fallback order: OpenAI → Paid Gemini → Free Gemini.`;
+                } catch (error) { setConfiguredStatus(providerStatusIds[provider], true, error.message || 'Could not remove key.'); }
+            });
+        const testId = provider === 'openai' ? 'testOpenAI' : provider === 'geminiPaid' ? 'testGeminiPaid' : 'testGeminiFree';
+        document.getElementById(testId)?.addEventListener('click', async () => {
+            setConfiguredStatus(providerStatusIds[provider], true, 'Testing connection…');
+            try {
+                const result = provider === 'openai'
+                    ? await window.electronAPI.testOpenAIConnection()
+                    : await window.electronAPI.testGeminiKey(provider === 'geminiFree' ? 'free' : 'paid');
+                setConfiguredStatus(providerStatusIds[provider], result.success, result.success
+                    ? `Connected · ${result.model || title}`
+                    : `${result.errorType || 'Error'} · ${result.error || 'Connection failed'}`);
+            } catch (error) { setConfiguredStatus(providerStatusIds[provider], false, error.message || 'Connection test failed.'); }
+        });
+    }
+    document.querySelectorAll('.key-toggle').forEach(button => button.addEventListener('click', () => {
+        const input = document.getElementById(button.dataset.target);
+        if (!input) return;
+        input.type = input.type === 'password' ? 'text' : 'password';
+        button.textContent = input.type === 'password' ? 'Show' : 'Hide';
+    }));
 
     const updateSpeechFieldStates = () => {
         const provider = speechProviderSelect ? speechProviderSelect.value : 'azure';
@@ -199,8 +271,11 @@ document.addEventListener('DOMContentLoaded', () => {
         whisperResponseTargetSelect,
         whisperSegmentMsInput,
         geminiKeyInput,
+        openaiModelInput,
         windowGapInput,
-        personalDetailsInput
+        personalDetailsInput,
+        candidateResumeInput,
+        jobDescriptionInput
     ];
 
     inputs.forEach(input => {

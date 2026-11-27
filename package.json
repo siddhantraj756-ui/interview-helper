@@ -7,6 +7,7 @@
     "start": "env -u ELECTRON_RUN_AS_NODE electron .",
     "dev": "env -u ELECTRON_RUN_AS_NODE electron . --no-sandbox --disable-gpu",
     "test-speech": "node scripts/test-speech.js",
+    "test": "node --test test/*.test.js",
     "build": "electron-builder",
     "build:mac": "electron-builder --mac",
     "build:win": "electron-builder --win",
@@ -26,7 +27,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/TechyCSR/OpenCluely"
+    "url": "https://github.com/siddhantraj756-ui/interview-helper.git"
   },
   "license": "ISC",
   "dependencies": {
@@ -129,7 +130,7 @@
           ]
         }
       ],
-      "icon": "assests/icons/app-icon.png",
+      "icon": "assests/icons/terminal.png",
       "category": "Utility"
     },
     "deb": {

@@ -270,6 +270,10 @@
         .settings-note code {
             color: rgba(255, 255, 255, 0.9);
         }
+        .provider-key-row, .provider-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+        .provider-key-row .input-field { flex:1; min-width:200px; }
+        .provider-actions .settings-item-description { flex:1; min-width:130px; }
+        .provider-actions button { flex:0 0 auto; }
     </style>
 </head>
 <body>
@@ -461,16 +465,36 @@
             <div class="settings-section">
                 <div class="settings-section-title">
                     <i class="fas fa-robot"></i>
-                    Gemini Settings
+                    AI Providers
                 </div>
                 <div class="settings-section-content">
                     <div class="settings-item">
-                        <div>
-                            <div class="settings-item-label">Google API Key</div>
-                            <div class="settings-item-description">Your Google API key for Gemini models</div>
+                        <div style="width:100%">
+                            <div class="settings-item-label">OpenAI API key</div>
+                            <div class="settings-item-description">Primary provider. Keys are stored using the operating system's secure storage. Connection tests use a short API request.</div>
+                            <div class="provider-key-row"><input type="password" class="input-field" id="openaiKey" placeholder="Enter a key to add or replace" autocomplete="off"><button class="btn secondary key-toggle" data-target="openaiKey" type="button">Show</button></div>
+                            <div class="provider-actions"><span id="openaiStatus" class="settings-item-description">Not configured</span><button id="saveOpenAI" class="btn primary" type="button">Save key</button><button id="testOpenAI" class="btn secondary" type="button">Test connection</button><button id="removeOpenAI" class="btn secondary" type="button">Remove</button></div>
+                            <div class="settings-item-label" style="margin-top:14px">OpenAI model</div>
+                            <input type="text" class="input-field" id="openaiModel" placeholder="gpt-6.2-sol">
                         </div>
-                        <input type="password" class="input-field" id="geminiKey" placeholder="Enter your Google API key">
                     </div>
+                    <div class="settings-item">
+                        <div style="width:100%">
+                            <div class="settings-item-label">Paid Gemini API key</div>
+                            <div class="settings-item-description">Fallback after OpenAI. Select a key tied to the Gemini project you consider paid.</div>
+                            <div class="provider-key-row"><input type="password" class="input-field" id="geminiPaidKey" placeholder="Enter a key to add or replace" autocomplete="off"><button class="btn secondary key-toggle" data-target="geminiPaidKey" type="button">Show</button></div>
+                            <div class="provider-actions"><span id="geminiPaidStatus" class="settings-item-description">Not configured</span><button id="saveGeminiPaid" class="btn primary" type="button">Save key</button><button id="testGeminiPaid" class="btn secondary" type="button">Test connection</button><button id="removeGeminiPaid" class="btn secondary" type="button">Remove</button></div>
+                        </div>
+                    </div>
+                    <div class="settings-item">
+                        <div style="width:100%">
+                            <div class="settings-item-label">Free Gemini API key</div>
+                            <div class="settings-item-description">Last fallback. Gemini keys do not reveal billing status, so choose and label the project yourself.</div>
+                            <div class="provider-key-row"><input type="password" class="input-field" id="geminiFreeKey" placeholder="Enter a key to add or replace" autocomplete="off"><button class="btn secondary key-toggle" data-target="geminiFreeKey" type="button">Show</button></div>
+                            <div class="provider-actions"><span id="geminiFreeStatus" class="settings-item-description">Not configured</span><button id="saveGeminiFree" class="btn primary" type="button">Save key</button><button id="testGeminiFree" class="btn secondary" type="button">Test connection</button><button id="removeGeminiFree" class="btn secondary" type="button">Remove</button></div>
+                        </div>
+                    </div>
+                    <div id="providerSummary" class="settings-note">Provider priority: OpenAI → Paid Gemini → Free Gemini.</div>
                 </div>
             </div>
             
@@ -484,7 +508,11 @@
                         <div style="flex:1">
                             <div class="settings-item-label">Personal Details</div>
                             <div class="settings-item-description" style="margin-bottom:8px">Enter background details (e.g. experience, frameworks) to tailor AI replies.</div>
-                            <textarea class="input-field" id="personalDetails" rows="4" style="resize:vertical; max-width:100%; width: 100%;"></textarea>
+                            <textarea class="input-field" id="personalDetails" rows="3" style="resize:vertical; max-width:100%; width: 100%;" placeholder="Experience, skills, and projects that are accurate to you"></textarea>
+                            <div class="settings-item-label" style="margin-top:12px">Resume or candidate background</div>
+                            <textarea class="input-field" id="candidateResume" rows="4" style="resize:vertical; max-width:100%; width: 100%;" placeholder="Paste relevant resume details or project notes"></textarea>
+                            <div class="settings-item-label" style="margin-top:12px">Job description</div>
+                            <textarea class="input-field" id="jobDescription" rows="4" style="resize:vertical; max-width:100%; width: 100%;" placeholder="Optional role requirements to prioritize"></textarea>
                         </div>
                     </div>
                 </div>

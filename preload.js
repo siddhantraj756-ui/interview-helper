@@ -7,12 +7,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   takeScreenshot: () => ipcRenderer.invoke('take-screenshot'),
   
   // Speech recognition
-  startSpeechRecognition: () => ipcRenderer.invoke('start-speech-recognition'),
-  stopSpeechRecognition: () => ipcRenderer.invoke('stop-speech-recognition'),
-  flushSpeechForSubmit: () => ipcRenderer.invoke('flush-speech-for-submit'),
+  startSpeechRecognition: (requestId) => ipcRenderer.invoke('start-speech-recognition', requestId),
+  stopSpeechRecognition: (requestId) => ipcRenderer.invoke('stop-speech-recognition', requestId),
+  flushSpeechForSubmit: (requestId) => ipcRenderer.invoke('flush-speech-for-submit', requestId),
   sendAudioChunk: (buffer) => ipcRenderer.send('audio-chunk', { buffer }),
   reportAudioCaptureError: (message) => ipcRenderer.send('audio-capture-error', String(message || 'System audio capture failed')),
   reportSystemAudioCaptureReady: (details) => ipcRenderer.send('system-audio-capture-ready', details || {}),
+  reportSystemAudioCaptureStopped: (requestId) => ipcRenderer.send('audio-capture-stopped', requestId),
+  reportAudioPerformanceEvent: (requestId, stage) => ipcRenderer.send('report-audio-performance-event', { requestId, stage }),
   getSpeechAvailability: () => ipcRenderer.invoke('get-speech-availability'),
   
   // Window management
@@ -31,9 +33,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getLLMSessionHistory: () => ipcRenderer.invoke('get-llm-session-history'),
   clearSessionMemory: () => ipcRenderer.invoke('clear-session-memory'),
   formatSessionHistory: () => ipcRenderer.invoke('format-session-history'),
-  sendChatMessage: (text, transcriptThroughId = 0) => ipcRenderer.invoke('send-chat-message', {
+  sendChatMessage: (text, transcriptThroughId = 0, transcriptionProcessingMs = null, requestId = null, captureSessionId = null) => ipcRenderer.invoke('send-chat-message', {
     text,
-    transcriptThroughId
+    transcriptThroughId,
+    transcriptionProcessingMs,
+    requestId,
+    captureSessionId
   }),
   getSkillPrompt: (skillName) => ipcRenderer.invoke('get-skill-prompt', skillName),
   
@@ -41,6 +46,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setGeminiApiKey: (apiKey) => ipcRenderer.invoke('set-gemini-api-key', apiKey),
   getGeminiStatus: () => ipcRenderer.invoke('get-gemini-status'),
   testGeminiConnection: () => ipcRenderer.invoke('test-gemini-connection'),
+  saveProviderCredentials: (entries) => ipcRenderer.invoke('save-provider-credentials', entries),
+  testOpenAIConnection: () => ipcRenderer.invoke('test-openai-connection'),
+  testGeminiKey: (tier) => ipcRenderer.invoke('test-gemini-key', tier),
   
   // Settings
   showSettings: () => ipcRenderer.invoke('show-settings'),
@@ -123,6 +131,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onRecordingStarted: (callback) => ipcRenderer.on('recording-started', callback),
   onSystemAudioCaptureRequested: (callback) => ipcRenderer.on('system-audio-capture-requested', callback),
   onRecordingStopped: (callback) => ipcRenderer.on('recording-stopped', callback),
+  onAudioWorkflowState: (callback) => ipcRenderer.on('audio-workflow-state', callback),
   onCodingLanguageChanged: (callback) => ipcRenderer.on('coding-language-changed', callback),
   onMainWindowShown: (callback) => ipcRenderer.on('main-window-shown', callback),
   

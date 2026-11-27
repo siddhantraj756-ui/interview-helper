@@ -44,6 +44,8 @@
     step: 0,
     geminiKey: '',
     geminiConfigured: false, // a key already exists in .env from a prior run
+    openaiKey: '',
+    openaiConfigured: false,
     speechProvider: null, // 'whisper' | 'azure' | 'skip'
     azureKey: '',
     azureRegion: '',
@@ -136,7 +138,7 @@
         return true;
       case 'apikey':
         // A key already in .env is enough — don't force a re-entry.
-        return !!state.geminiKey.trim() || state.geminiConfigured;
+        return !!state.geminiKey.trim() || state.geminiConfigured || !!state.openaiKey.trim() || state.openaiConfigured;
       case 'speech':
         if (state.speechProvider === 'azure') {
           return !!state.azureKey.trim() && !!state.azureRegion.trim();
@@ -156,6 +158,8 @@
 
   // ── Wire up: API key ──────────────────────────────────────────────
   const geminiInput = $('#geminiKey');
+  const openaiInput = $('#openaiKey');
+  const toggleOpenAIVis = $('#toggleOpenAIVis');
   const toggleVis = $('#toggleVis');
   const keyStatus = $('#keyStatus');
 
@@ -185,6 +189,12 @@
     } else {
       setKeyStatus('idle', 'Key entered');
     }
+  });
+  openaiInput.addEventListener('input', () => { state.openaiKey = openaiInput.value.trim(); });
+  toggleOpenAIVis.addEventListener('click', () => {
+    const showing = openaiInput.type === 'text';
+    openaiInput.type = showing ? 'password' : 'text';
+    toggleOpenAIVis.innerHTML = showing ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
   });
 
   toggleVis.addEventListener('click', () => {
@@ -455,6 +465,11 @@
       value: (state.geminiKey || state.geminiConfigured) ? 'Configured' : 'Missing',
       cls: (state.geminiKey || state.geminiConfigured) ? 'ok' : 'skip',
     });
+    rows.push({
+      label: '<i class="fas fa-key"></i> OpenAI API',
+      value: (state.openaiKey || state.openaiConfigured) ? 'Configured' : 'Not configured',
+      cls: (state.openaiKey || state.openaiConfigured) ? 'ok' : 'skip',
+    });
     if (state.speechProvider === 'whisper') {
       rows.push({
         label: '<i class="fas fa-microphone"></i> Speech',
@@ -491,9 +506,9 @@
 
   $('#starBtn').addEventListener('click', () => {
     if (window.electronAPI && window.electronAPI.openExternal) {
-      window.electronAPI.openExternal('https://github.com/TechyCSR/OpenCluely');
+      window.electronAPI.openExternal('https://github.com/siddhantraj756-ui/interview-helper');
     } else {
-      window.open('https://github.com/TechyCSR/OpenCluely', '_blank');
+      window.open('https://github.com/siddhantraj756-ui/interview-helper', '_blank');
     }
   });
   $('#skipStarBtn').addEventListener('click', () => {
@@ -514,17 +529,24 @@
     const name = currentScreenName();
     if (!canAdvance()) {
       // Lightly nudge the user
-      if (name === 'apikey') setKeyStatus('error', 'Enter a Gemini API key');
+      if (name === 'apikey') setKeyStatus('error', 'Enter an OpenAI or Gemini API key');
       return;
     }
 
-    // Persist settings on speech selection (Azure path), since we
-    // already saved geminiKey on test; do it here too if user skipped
-    // testing.
-    if (name === 'apikey' && state.geminiKey && window.electronAPI) {
+    if (name === 'apikey' && window.electronAPI) {
       try {
-        await window.electronAPI.saveSettings({ geminiKey: state.geminiKey });
-      } catch (_) { /* surfaced elsewhere */ }
+        const keys = {};
+        if (state.geminiKey) keys.geminiPaid = state.geminiKey;
+        if (state.openaiKey) keys.openai = state.openaiKey;
+        if (Object.keys(keys).length) await window.electronAPI.saveProviderCredentials(keys);
+        state.geminiKey = '';
+        state.openaiKey = '';
+        geminiInput.value = '';
+        openaiInput.value = '';
+      } catch (error) {
+        setKeyStatus('error', error.message || 'Could not store the API key securely');
+        return;
+      }
     }
     if (name === 'speech' && window.electronAPI) {
       try {
@@ -667,6 +689,7 @@
         setKeyStatus('success', 'Already configured — click Continue');
         geminiInput.placeholder = '•••••••••••••••• (already set)';
       }
+      if (s && s.openaiConfigured) state.openaiConfigured = true;
     }).catch(() => {});
   }
 })();

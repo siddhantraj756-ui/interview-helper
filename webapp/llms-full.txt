@@ -8,7 +8,7 @@
 - Short description: Free, open-source AI interview copilot with a stealth overlay invisible to screen recording. MIT-licensed Cluely alternative.
 - Long description: OpenCluely is a cross-platform Electron desktop application that overlays a small floating window on the user's screen during technical interviews. The overlay is excluded from screen capture by Zoom, Google Meet, Microsoft Teams, Discord, and OBS. The app accepts voice or screenshot input, sends it to Google Gemini for reasoning, and streams the answer back into the overlay word by word. It is a free MIT-licensed alternative to Cluely, Natively, Interview Coder, FinalRound AI, LockedIn AI, OffscreenAI, CodingVeil, Steal AI, and Ezzi. Architecture is model-agnostic by design; additional backends (OpenAI, Anthropic, local models) are planned.
 - URL: https://opencluely.techycsr.dev/
-- Repository: https://github.com/TechyCSR/OpenCluely
+- Repository: https://github.com/siddhantraj756-ui/interview-helper
 - Author: TechyCSR
 - Author URL: https://techycsr.dev
 - Maintainer: TechyCSR
@@ -86,10 +86,10 @@
 ## Related URLs
 
 - Homepage: https://opencluely.techycsr.dev/
-- GitHub: https://github.com/TechyCSR/OpenCluely
-- Releases: https://github.com/TechyCSR/OpenCluely/releases/latest
-- Releases feed (Atom): https://github.com/TechyCSR/OpenCluely/releases.atom
-- Issue tracker: https://github.com/TechyCSR/OpenCluely/issues
+- GitHub: https://github.com/siddhantraj756-ui/interview-helper
+- Releases: https://github.com/siddhantraj756-ui/interview-helper/releases/latest
+- Releases feed (Atom): https://github.com/siddhantraj756-ui/interview-helper/releases.atom
+- Issue tracker: https://github.com/siddhantraj756-ui/interview-helper/issues
 - Developer: https://techycsr.dev
 - License: https://opensource.org/licenses/MIT
 - sitemap: https://opencluely.techycsr.dev/sitemap.xml

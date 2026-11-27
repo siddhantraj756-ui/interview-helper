@@ -441,6 +441,7 @@
 
         <!-- Response Content -->
         <div id="response-content" class="content-area hidden">
+            <div id="response-metadata" style="padding:8px 14px;color:rgba(255,255,255,.62);font:11px system-ui;display:none"></div>
             <!-- Split Layout -->
             <div id="split-layout" class="split-layout hidden">
                 <!-- Text Panel -->
@@ -650,6 +651,18 @@
 
             // Parse the response - check both content and response properties for compatibility
             const response = data.content || data.response;
+            const metadata = data.metadata || {};
+            const details = [];
+            if (metadata.transcriptionProcessingMs != null) details.push(`Transcription: ${(metadata.transcriptionProcessingMs / 1000).toFixed(1)}s`);
+            if (metadata.provider) details.push(`Provider: ${metadata.provider}`);
+            if (metadata.model) details.push(`Model: ${metadata.model}`);
+            if (metadata.timeToFirstTokenMs != null) details.push(`First token: ${(metadata.timeToFirstTokenMs / 1000).toFixed(1)}s`);
+            if (metadata.processingTime != null) details.push(`LLM response: ${(metadata.processingTime / 1000).toFixed(1)}s`);
+            const metadataElement = document.getElementById('response-metadata');
+            if (metadataElement) {
+                metadataElement.textContent = details.join('  ·  ');
+                metadataElement.style.display = details.length ? 'block' : 'none';
+            }
             
             if (!response) {
                 console.error('No response data received', {

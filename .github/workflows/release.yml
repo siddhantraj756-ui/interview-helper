@@ -40,17 +40,17 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Run tests
+        run: npm test
+
       # electron-builder reads `version` from package.json for artifact
-      # naming (e.g. OpenCluely-1.0.0-x64.dmg). When we build from a
-      # git tag (v1.0.7) the package.json still says 1.0.0 by default,
-      # so artifact names drift from the release tag. Sync them here.
-      # `npm pkg set` is cross-platform and doesn't touch git.
+      # naming. Keep package.json and package-lock.json in sync with the tag.
       - name: Sync package.json version from tag
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
@@ -60,7 +60,7 @@ jobs:
           CURRENT=$(node -p "require('./package.json').version")
           echo "Current package.json version: $CURRENT"
           if [ "$VERSION" != "$CURRENT" ]; then
-            npm pkg set "version=$VERSION"
+            npm version "$VERSION" --no-git-tag-version
             echo "Updated package.json to $VERSION"
           else
             echo "Version already matches tag"
@@ -105,7 +105,7 @@ jobs:
   release:
     name: Create GitHub Release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (full history for changelog)
@@ -186,9 +186,9 @@ jobs:
 
           > **macOS:** no pre-built build is shipped. The app is unsigned/un-notarized, so macOS Gatekeeper blocks it as "damaged". Run OpenCluely from source instead:
           > ```bash
-          > git clone https://github.com/TechyCSR/OpenCluely && cd OpenCluely && ./setup.sh
+          > git clone https://github.com/siddhantraj756-ui/interview-helper && cd interview-helper && ./setup.sh
           > ```
-          > Requires Node.js 18+. See the [README](https://github.com/TechyCSR/OpenCluely#quick-start) for details.
+          > Requires Node.js 18+. See the [README](https://github.com/siddhantraj756-ui/interview-helper#quick-start) for details.
 
           ## First Run
 

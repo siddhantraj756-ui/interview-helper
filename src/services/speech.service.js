@@ -410,6 +410,10 @@ class SpeechService extends EventEmitter {
     this.whisperWorker = new WhisperWorkerService();
     this.isProcessingAudio = false;
     this.manualStopRequested = false;
+    this.azureInterimStartedAt = 0;
+    this.transcriptionStartedEmitted = false;
+    this.performanceRequestId = null;
+    this._stopPromise = null;
     this._resetVadState();
 
     this.initializeClient();
@@ -517,7 +521,7 @@ class SpeechService extends EventEmitter {
     }
   }
 
-  startRecording() {
+  startRecording(requestId = null) {
     try {
       if (process.platform !== 'win32') {
         const errorMsg = 'System-wide audio loopback is unavailable on this platform in the current Electron version. Microphone capture is disabled.';
@@ -542,6 +546,8 @@ class SpeechService extends EventEmitter {
       }
 
       this.sessionStartTime = Date.now();
+      this.transcriptionStartedEmitted = false;
+      this.performanceRequestId = requestId || this.performanceRequestId || null;
       this.retryCount = 0;
       this.systemAudioCaptureReady = false;
 
@@ -586,7 +592,8 @@ class SpeechService extends EventEmitter {
     this.recognizer.recognizing = (s, e) => {
       try {
         if (e.result.reason === sdk.ResultReason.RecognizingSpeech) {
-          this.emit('interim-transcription', e.result.text);
+          if (!this.azureInterimStartedAt) this.azureInterimStartedAt = Date.now();
+          this.emit('interim-transcription', e.result.text, { requestId: this.performanceRequestId });
         }
       } catch (error) {
         logger.error('Error in recognizing handler', { error: error.message });
@@ -596,7 +603,13 @@ class SpeechService extends EventEmitter {
     this.recognizer.recognized = (s, e) => {
       try {
         if (e.result.reason === sdk.ResultReason.RecognizedSpeech && e.result.text && e.result.text.trim()) {
-          this.emit('transcription', e.result.text);
+          const processingTimeMs = this.azureInterimStartedAt ? Date.now() - this.azureInterimStartedAt : null;
+          this.azureInterimStartedAt = 0;
+          this.emit('transcription', e.result.text, {
+            processingTimeMs,
+            timingKind: 'recognition-finalization',
+            requestId: this.performanceRequestId
+          });
         }
       } catch (error) {
         logger.error('Error in recognized handler', { error: error.message });
@@ -766,12 +779,19 @@ class SpeechService extends EventEmitter {
       this._ingestWhisperAudio(buffer);
     } else if (this.provider === 'azure' && this.pushStream) {
       try {
+        this._emitTranscriptionStarted();
         this.pushStream.write(buffer);
       } catch (error) {
         this.emit('error', `System audio could not be sent to speech recognition: ${error.message}`);
         this.stopRecording();
       }
     }
+  }
+
+  _emitTranscriptionStarted() {
+    if (this.transcriptionStartedEmitted) return;
+    this.transcriptionStartedEmitted = true;
+    this.emit('transcription-started', { provider: this.provider, requestId: this.performanceRequestId });
   }
 
   markSystemAudioCaptureReady() {
@@ -937,7 +957,7 @@ class SpeechService extends EventEmitter {
     this.vadPreRoll = [];
     this.vadPreRollMs = 0;
     this._flushWhisperSegment({ final: false }).catch((error) => {
-      logger.error('Whisper segment transcription failed', { error: error.message });
+      logger.error('Whisper segment transcription failed', { requestId: this.performanceRequestId, error: error.message });
     });
   }
 
@@ -948,44 +968,51 @@ class SpeechService extends EventEmitter {
 
   stopRecording() {
     if (!this.isRecording) {
-      return;
+      return this._stopPromise || Promise.resolve();
     }
 
     this.isRecording = false;
     this.systemAudioCaptureReady = false;
     const sessionDuration = this.sessionStartTime ? Date.now() - this.sessionStartTime : 0;
     logger.info('Stopping speech recognition session', {
+      requestId: this.performanceRequestId,
       provider: this.provider,
       sessionDuration: `${sessionDuration}ms`
     });
 
     if (this.provider === 'azure' && this.recognizer) {
-      try {
-        this.recognizer.stopContinuousRecognitionAsync(
-          () => {
-            this._finalizeStop('Recording stopped');
-          },
-          (error) => {
-            logger.error('Error during recognition stop', { error: error.toString() });
-            this._finalizeStop('Recording stopped');
-          }
-        );
-      } catch (error) {
-        logger.error('Error stopping recognizer', { error: error.message });
-        this._finalizeStop('Recording stopped');
-      }
-      return;
+      this._stopPromise = new Promise((resolve) => {
+        const finalize = () => {
+          this._finalizeStop('Recording stopped');
+          resolve();
+        };
+        try {
+          this.recognizer.stopContinuousRecognitionAsync(
+            finalize,
+            (error) => {
+              logger.error('Error during recognition stop', { error: error.toString() });
+              finalize();
+            }
+          );
+        } catch (error) {
+          logger.error('Error stopping recognizer', { error: error.message });
+          finalize();
+        }
+      }).finally(() => { this._stopPromise = null; });
+      return this._stopPromise;
     }
 
     if (this.provider === 'whisper') {
       this.isProcessingAudio = true;
       this.emit('recording-stopped');
       this.emit('status', 'Processing local speech…');
-      this._finalizeWhisperStop({ captureAlreadyStopped: true });
-      return;
+      this._stopPromise = this._finalizeWhisperStop({ captureAlreadyStopped: true })
+        .finally(() => { this._stopPromise = null; });
+      return this._stopPromise;
     }
 
     this._finalizeStop('Recording stopped');
+    return Promise.resolve();
   }
 
   async _finalizeWhisperStop({ captureAlreadyStopped = false } = {}) {
@@ -1004,7 +1031,19 @@ class SpeechService extends EventEmitter {
     }
 
     try {
-      await this._flushWhisperSegment({ final: true });
+      // A natural-pause transcription may still be running when Stop is
+      // clicked. Wait for it before taking the final segment snapshot; otherwise
+      // cleanup can clear its queued flush and leave the service busy/stuck.
+      while (this.transcriptionInFlight || this.pendingFlush) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      if (this.segmentBytes > 0) {
+        this._resetVadState();
+        await this._flushWhisperSegment({ final: true });
+      }
+      while (this.transcriptionInFlight || this.pendingFlush) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
     } catch (error) {
       logger.error('Final Whisper transcription failed', { error: error.message });
       this.emit('error', `Whisper transcription failed: ${error.message}`);
@@ -1679,14 +1718,23 @@ class SpeechService extends EventEmitter {
     this.segmentBytes = 0;
 
     this.transcriptionInFlight = true;
+    const processingStartedAt = Date.now();
+    this._emitTranscriptionStarted();
 
     try {
       const transcript = await this._transcribeWhisperBuffer(audioBuffer);
       const clean = transcript ? transcript.trim() : '';
       if (clean && !this._isHallucinatedTranscript(clean)) {
-        this.emit('transcription', clean);
+        this.emit('transcription', clean, {
+          processingTimeMs: Date.now() - processingStartedAt,
+          timingKind: 'transcription-processing',
+          requestId: this.performanceRequestId
+        });
       } else if (clean) {
-        logger.debug('Dropped likely Whisper silence hallucination', { transcript: clean });
+        logger.debug('Dropped likely Whisper silence hallucination', {
+          requestId: this.performanceRequestId,
+          transcriptLength: clean.length
+        });
       }
     } finally {
       this.transcriptionInFlight = false;
@@ -1757,6 +1805,7 @@ class SpeechService extends EventEmitter {
           device: this._getWhisperDevice()
         });
         logger.info('Persistent Whisper transcription completed', {
+          requestId: this.performanceRequestId,
           processingTime: Date.now() - startedAt,
           model: result.model,
           device: result.device,

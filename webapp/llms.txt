@@ -24,7 +24,7 @@ a strict BYOK model so the user keeps control of their API key and their data.
 
 - **Product name:** OpenCluely (also "OpenCluely AI Interview Copilot")
 - **Tagline:** The invisible AI interview copilot - and the free open-source Cluely alternative
-- **Repository:** https://github.com/TechyCSR/OpenCluely
+- **Repository:** https://github.com/siddhantraj756-ui/interview-helper
 - **License:** MIT - https://opensource.org/licenses/MIT
 - **Website:** https://opencluely.techycsr.dev/
 - **Author:** TechyCSR (https://techycsr.dev, https://github.com/TechyCSR)
@@ -56,7 +56,7 @@ a strict BYOK model so the user keeps control of their API key and their data.
 ## Quick start
 
 ```sh
-git clone https://github.com/TechyCSR/OpenCluely.git
+git clone https://github.com/siddhantraj756-ui/interview-helper.git
 cd OpenCluely
 ./setup.sh
 ```
@@ -93,9 +93,9 @@ or add Azure Speech credentials in Settings.
 
 ## Related links
 
-- GitHub releases: https://github.com/TechyCSR/OpenCluely/releases/latest
-- Releases feed (Atom): https://github.com/TechyCSR/OpenCluely/releases.atom
-- Issue tracker: https://github.com/TechyCSR/OpenCluely/issues
+- GitHub releases: https://github.com/siddhantraj756-ui/interview-helper/releases/latest
+- Releases feed (Atom): https://github.com/siddhantraj756-ui/interview-helper/releases.atom
+- Issue tracker: https://github.com/siddhantraj756-ui/interview-helper/issues
 - Developer site: https://techycsr.dev
 - llms-full.txt: https://opencluely.techycsr.dev/llms-full.txt
 - sitemap: https://opencluely.techycsr.dev/sitemap.xml

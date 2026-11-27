@@ -177,6 +177,8 @@ class LLMService {
           responseText = await this.executeRequest(request);
         }
       } catch (error) {
+        const analysis = error.errorAnalysis || this.analyzeError(error);
+        if (['AUTH_ERROR', 'RATE_LIMIT_ERROR'].includes(analysis.type)) throw error;
         const secondaryLabel = preferAlternative ? 'primary SDK method' : 'alternative HTTPS method';
         logger.warn(`${preferAlternative ? 'Alternative' : 'Primary'} method failed, trying ${secondaryLabel}`, { error: error.message });
         const secondaryFn = preferAlternative ? this.executeRequest.bind(this) : this.executeAlternativeRequest.bind(this);
@@ -296,6 +298,8 @@ class LLMService {
         }
       };
     } catch (error) {
+      const analysis = this.analyzeError(error);
+      if (['AUTH_ERROR', 'RATE_LIMIT_ERROR'].includes(analysis.type)) throw error;
       logger.warn('Streaming image analysis failed, falling back to non-streaming', {
         error: error.message,
         requestId: this.requestCount
@@ -338,6 +342,8 @@ class LLMService {
           response = await this.executeRequest(geminiRequest);
         }
       } catch (error) {
+        const analysis = error.errorAnalysis || this.analyzeError(error);
+        if (['AUTH_ERROR', 'RATE_LIMIT_ERROR'].includes(analysis.type)) throw error;
         const secondaryLabel = preferAlternative ? 'primary SDK method' : 'alternative HTTPS method';
         logger.warn(`${preferAlternative ? 'Alternative' : 'Primary'} method failed, trying ${secondaryLabel}`, {
           error: error.message,
@@ -396,7 +402,7 @@ class LLMService {
     }
   }
 
-  async processTextWithSkillStream(text, activeSkill, sessionMemory = [], programmingLanguage = null, onDelta = null) {
+  async processTextWithSkillStream(text, activeSkill, sessionMemory = [], programmingLanguage = null, onDelta = null, promptOverride = null) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
@@ -406,6 +412,7 @@ class LLMService {
 
     try {
       const geminiRequest = this.buildGeminiRequest(text, activeSkill, sessionMemory, programmingLanguage);
+      if (promptOverride) geminiRequest.systemInstruction = { parts: [{ text: promptOverride }] };
 
       const fullText = await this.executeStreamingRequest(geminiRequest, (delta) => {
         if (typeof onDelta === 'function' && delta) {
@@ -436,6 +443,8 @@ class LLMService {
         }
       };
     } catch (error) {
+      const analysis = this.analyzeError(error);
+      if (['AUTH_ERROR', 'RATE_LIMIT_ERROR'].includes(analysis.type)) throw error;
       logger.warn('Streaming text failed, falling back to non-streaming', {
         error: error.message,
         requestId: this.requestCount
@@ -473,6 +482,8 @@ class LLMService {
           response = await this.executeRequest(geminiRequest);
         }
       } catch (error) {
+        const analysis = error.errorAnalysis || this.analyzeError(error);
+        if (['AUTH_ERROR', 'RATE_LIMIT_ERROR'].includes(analysis.type)) throw error;
         const secondaryLabel = preferAlternative ? 'primary SDK method' : 'alternative HTTPS method';
         logger.warn(`${preferAlternative ? 'Alternative' : 'Primary'} method failed, trying ${secondaryLabel}`, {
           error: error.message,
@@ -952,6 +963,8 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
             break; // exit retry loop for this model and try next model
           }
 
+          if (errorInfo.type === 'RATE_LIMIT_ERROR' || errorInfo.type === 'AUTH_ERROR') break;
+
           if (attempt === maxRetries) {
             break; // exit retry loop for this model and try next model
           }
@@ -1105,6 +1118,8 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
             break; // try next fallback model
           }
 
+          if (errorInfo.type === 'RATE_LIMIT_ERROR' || errorInfo.type === 'AUTH_ERROR') break;
+
           if (attempt === maxRetries) {
             break;
           }
@@ -1127,7 +1142,7 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
 
     const https = require('https');
     const timeout = config.get('llm.gemini.timeout');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:streamGenerateContent?key=${encodeURIComponent(key)}&alt=sse`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:streamGenerateContent?alt=sse`;
     const postData = JSON.stringify(geminiRequest);
     const agent = new https.Agent({ keepAlive: true, maxSockets: 1 });
 
@@ -1252,7 +1267,10 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
     // API key errors
     if (errorMessage.includes('unauthorized') || 
         errorMessage.includes('invalid api key') ||
-        errorMessage.includes('forbidden')) {
+        errorMessage.includes('forbidden') ||
+        errorMessage.includes('http 401') ||
+        errorMessage.includes('http 403') ||
+        errorMessage.includes('api key not valid')) {
       return {
         type: 'AUTH_ERROR',
         isNetworkError: false,

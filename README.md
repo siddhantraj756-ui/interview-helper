@@ -7,8 +7,8 @@
 Real-time AI help on a stealth overlay that screen sharing cannot see. Ask by voice or screenshot, and get clear answers that stream in as you need them.
 
 <p>
-  <a href="https://github.com/TechyCSR/OpenCluely/releases/latest"><img src="https://img.shields.io/github/v/release/TechyCSR/OpenCluely?style=for-the-badge&label=Latest&color=111111&labelColor=000000" alt="Latest release" /></a>
-  <a href="https://github.com/TechyCSR/OpenCluely/releases"><img src="https://img.shields.io/github/downloads/TechyCSR/OpenCluely/total?style=for-the-badge&color=111111&labelColor=000000" alt="Downloads" /></a>
+  <a href="https://github.com/siddhantraj756-ui/interview-helper/releases/latest"><img src="https://img.shields.io/github/v/release/siddhantraj756-ui/interview-helper?style=for-the-badge&label=Latest&color=111111&labelColor=000000" alt="Latest release" /></a>
+  <a href="https://github.com/siddhantraj756-ui/interview-helper/releases"><img src="https://img.shields.io/github/downloads/siddhantraj756-ui/interview-helper/total?style=for-the-badge&color=111111&labelColor=000000" alt="Downloads" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-111111?style=for-the-badge&labelColor=000000" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/Platforms-Windows%20%7C%20macOS%20%7C%20Linux-111111?style=for-the-badge&labelColor=000000" alt="Platforms" />
 </p>
@@ -48,9 +48,9 @@ Pre-built installers are published with every release. These links always point 
 
 | Platform | File | Notes |
 |---|---|---|
-| Windows | [Setup .exe](https://github.com/TechyCSR/OpenCluely/releases/latest) | NSIS installer. Adds a Start Menu shortcut. |
-| Linux (Debian or Ubuntu) | [.deb](https://github.com/TechyCSR/OpenCluely/releases/latest) | Pulls system deps automatically (Python, ffmpeg, GTK). |
-| Linux (universal) | [.AppImage](https://github.com/TechyCSR/OpenCluely/releases/latest) | No install. Run `chmod +x` then launch. |
+| Windows | [Setup .exe](https://github.com/siddhantraj756-ui/interview-helper/releases/latest) | NSIS installer. Adds a Start Menu shortcut. |
+| Linux (Debian or Ubuntu) | [.deb](https://github.com/siddhantraj756-ui/interview-helper/releases/latest) | Pulls system deps automatically (Python, ffmpeg, GTK). |
+| Linux (universal) | [.AppImage](https://github.com/siddhantraj756-ui/interview-helper/releases/latest) | No install. Run `chmod +x` then launch. |
 
 > **macOS:** there is no pre-built download. The app is unsigned and un-notarized, so macOS Gatekeeper blocks it as "damaged and can't be opened." Run OpenCluely from source instead — see [Quick start](#quick-start). It is a one-line `./setup.sh` once Node.js is installed.
 
@@ -65,8 +65,8 @@ If you would rather build from source, three steps are all it takes.
 1. Clone the repository.
 
    ```bash
-   git clone https://github.com/TechyCSR/OpenCluely.git
-   cd OpenCluely
+   git clone https://github.com/siddhantraj756-ui/interview-helper.git
+   cd interview-helper
    ```
 
 2. Run the setup script.

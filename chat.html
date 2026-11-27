@@ -701,10 +701,10 @@
             id="messageInput"
             rows="1"
           ></textarea>
-          <button class="mic-button" id="micButton">
+          <button class="mic-button" id="micButton" title="Start or stop listening" aria-label="Start or stop listening" aria-pressed="false">
             <i class="fas fa-microphone"></i>
           </button>
-          <button class="send-button" id="sendButton">
+          <button class="send-button" id="sendButton" title="Submit message" aria-label="Submit message">
             <i class="fas fa-paper-plane"></i>
           </button>
         </div>
@@ -737,11 +737,17 @@
 
       let isRecording = false;
       let isCaptureStarting = false;
+      let isCaptureStopping = false;
       let isInteractive = true;
       let listeningStartTime = null;
       let listeningTimer = null;
       let speechAvailable = false;
       let chatSubmissionPending = false;
+      let lastSubmittedQuestion = '';
+      let activeRequestId = null;
+      let workflowState = 'idle';
+      const streamingMessages = new Map();
+      const reportedFirstRender = new Set();
 
       // Chat persistence and deduplication
       const CHAT_HISTORY_KEY = 'opencluely_chat_history_v1';
@@ -833,7 +839,10 @@
         whysperAPI.onLlmResponse((event, data) => {
           try { hideThinkingIndicator(); } catch (_) {}
           if (data && data.response) {
-            renderAssistantResponse(data.response);
+            lastSubmittedQuestion = '';
+            removeStreamingMessage(data.metadata && data.metadata.messageId);
+            renderAssistantResponse(data.response, data.metadata);
+            reportFirstResponseRendered(data.metadata && data.metadata.requestId);
           }
         });
       }
@@ -842,6 +851,14 @@
       if (whysperAPI && whysperAPI.onSessionCleared) {
         whysperAPI.onSessionCleared(() => {
           clearChatHistory(true);
+        });
+      }
+
+      if (whysperAPI && whysperAPI.onAudioWorkflowState) {
+        whysperAPI.onAudioWorkflowState((_event, data) => {
+          if (!data || !data.state) return;
+          workflowState = data.state;
+          if (micButton) micButton.dataset.workflowState = workflowState;
         });
       }
 
@@ -985,29 +1002,49 @@
       // Recording Event Handlers
       function handleRecordingStarted() {
         isRecording = true;
+        isCaptureStarting = false;
 
         if (recordingIndicator) {
           recordingIndicator.style.display = 'block';
         }
         if (micButton) {
           micButton.classList.add('recording');
+          micButton.setAttribute('aria-pressed', 'true');
         }
 
         showListeningAnimation();
       }
 
       function handleRecordingStopped() {
+        const wasRecording = isRecording
+          || isCaptureStarting
+          || (micButton && micButton.classList.contains('recording'));
         isRecording = false;
+        isCaptureStarting = false;
 
         if (recordingIndicator) {
           recordingIndicator.style.display = 'none';
         }
         if (micButton) {
           micButton.classList.remove('recording');
+          micButton.setAttribute('aria-pressed', 'false');
         }
 
         hideListeningAnimation();
-        addMessage('Stopped Listening', 'system');
+        if (wasRecording) addMessage('Stopped Listening', 'system');
+      }
+
+      async function stopCapture() {
+        if (isCaptureStopping) return;
+        isCaptureStopping = true;
+        micButton.disabled = true;
+        try {
+          const status = await whysperAPI.stopSpeechRecognition(activeRequestId);
+          if (!status || !status.isRecording) handleRecordingStopped();
+        } finally {
+          isCaptureStopping = false;
+          micButton.disabled = false;
+        }
       }
 
       function handleTranscription(text) {
@@ -1118,7 +1155,7 @@
           saveHistory();
         }
       }
-      function renderAssistantResponse(response) {
+      function renderAssistantResponse(response, metadata = {}) {
         if (!response || typeof response !== 'string') return;
         // Deduplication: avoid processing the same response twice
         const normalized = response.trim();
@@ -1129,6 +1166,14 @@
           const first = recentResponseHashes.values().next().value;
           recentResponseHashes.delete(first);
         }
+
+        const timing = [];
+        if (metadata.transcriptionProcessingMs != null) timing.push(`Transcription ${(metadata.transcriptionProcessingMs / 1000).toFixed(1)}s`);
+        if (metadata.provider) timing.push(metadata.provider);
+        if (metadata.model) timing.push(metadata.model);
+        if (metadata.processingTime != null) timing.push(`LLM ${(metadata.processingTime / 1000).toFixed(1)}s`);
+        if (metadata.timeToFirstTokenMs != null) timing.push(`First token ${(metadata.timeToFirstTokenMs / 1000).toFixed(1)}s`);
+        if (timing.length) addMessage(timing.join(' · '), 'system');
 
         const blocks = extractCodeBlocks(response);
         const textOnly = stripCodeBlocks(response, blocks);
@@ -1176,9 +1221,25 @@
           if (data && data.error) {
             addMessage(data.error, 'error');
             isCaptureStarting = false;
+            isCaptureStopping = false;
             handleRecordingStopped();
           }
         });
+
+        if (whysperAPI.onLlmError) {
+          whysperAPI.onLlmError((event, data) => {
+            hideThinkingIndicator();
+            if (data && data.error) {
+              addMessage(`LLM Error: ${data.error}`, 'error');
+              removeStreamingMessagesForRequest(data.requestId);
+              if (lastSubmittedQuestion && !messageInput.value.trim()) {
+                messageInput.value = lastSubmittedQuestion;
+                autoGrow(messageInput);
+              }
+              lastSubmittedQuestion = '';
+            }
+          });
+        }
 
         // Listen for other events
         whysperAPI.onRecordingStarted(() => {
@@ -1203,7 +1264,73 @@
         whysperAPI.onTranscriptionLlmResponse((event, data) => {
           if (data && data.response) {
             try { hideThinkingIndicator(); } catch (_) {}
-            renderAssistantResponse(data.response);
+            lastSubmittedQuestion = '';
+            removeStreamingMessage(data.messageId);
+            renderAssistantResponse(data.response, data.metadata);
+            reportFirstResponseRendered(data.requestId || (data.metadata && data.metadata.requestId));
+          }
+        });
+
+        if (whysperAPI.onTranscriptionLlmResponseStart) {
+          whysperAPI.onTranscriptionLlmResponseStart((_event, data) => {
+            if (!data || !data.messageId) return;
+            hideThinkingIndicator();
+            const bubble = document.createElement('div');
+            bubble.className = 'message assistant streaming-response';
+            const time = document.createElement('div');
+            time.className = 'message-time';
+            time.textContent = new Date().toLocaleTimeString();
+            const body = document.createElement('div');
+            body.className = 'message-text';
+            body.textContent = '';
+            bubble.append(time, body);
+            chatMessages.appendChild(bubble);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            streamingMessages.set(data.messageId, { bubble, body, requestId: data.requestId, firstDelta: false });
+          });
+        }
+
+        if (whysperAPI.onTranscriptionLlmResponseChunk) {
+          whysperAPI.onTranscriptionLlmResponseChunk((_event, data) => {
+            const stream = data && streamingMessages.get(data.messageId);
+            if (!stream) return;
+            if (data.reset) {
+              stream.body.textContent = '';
+              stream.firstDelta = false;
+              return;
+            }
+            const delta = typeof data.delta === 'string' ? data.delta : '';
+            if (!delta) return;
+            stream.body.textContent += delta;
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            if (!stream.firstDelta) {
+              stream.firstDelta = true;
+              reportFirstResponseRendered(stream.requestId);
+            }
+          });
+        }
+      }
+
+      function removeStreamingMessage(messageId) {
+        if (!messageId) return;
+        const stream = streamingMessages.get(messageId);
+        if (stream) stream.bubble.remove();
+        streamingMessages.delete(messageId);
+      }
+
+      function removeStreamingMessagesForRequest(requestId) {
+        if (!requestId) return;
+        for (const [messageId, stream] of streamingMessages) {
+          if (stream.requestId === requestId) removeStreamingMessage(messageId);
+        }
+      }
+
+      function reportFirstResponseRendered(requestId) {
+        if (!requestId || reportedFirstRender.has(requestId)) return;
+        reportedFirstRender.add(requestId);
+        requestAnimationFrame(() => {
+          if (whysperAPI && whysperAPI.reportAudioPerformanceEvent) {
+            whysperAPI.reportAudioPerformanceEvent(requestId, 'first_response_rendered');
           }
         });
       }
@@ -1215,6 +1342,7 @@
 
       if (micButton) {
         micButton.addEventListener('click', async () => {
+          if (isCaptureStopping) return;
           if (!isInteractive) {
             addMessage('Window is in non-interactive mode. Press Alt+A to enable interaction.', 'error');
             return;
@@ -1226,47 +1354,94 @@
 
           try {
             if (isRecording || isCaptureStarting) {
-              if (whysperAPI) {
-                const result = await whysperAPI.stopSpeechRecognition();
-              }
+              await stopCapture();
             } else {
+              if (activeRequestId) {
+                addMessage('Submit the current recording before starting another one.', 'system');
+                return;
+              }
+              activeRequestId = crypto.randomUUID();
               isCaptureStarting = true;
-              if (whysperAPI) {
-                const result = await whysperAPI.startSpeechRecognition();
+              // Show the listening state immediately while the OS loopback
+              // picker and audio graph are being prepared.
+              micButton.classList.add('recording');
+              micButton.setAttribute('aria-pressed', 'true');
+              const status = await whysperAPI.startSpeechRecognition(activeRequestId);
+              if (status && !status.isRecording) {
+                isCaptureStarting = false;
+                handleRecordingStopped();
+                activeRequestId = null;
               }
             }
           } catch (error) {
-            addMessage("Error in recognizing speech", 'error');
+            addMessage(`Speech recognition error: ${error.message || error}`, 'error');
+            isCaptureStarting = false;
+            handleRecordingStopped();
+            activeRequestId = null;
           }
         });
       }
 
-      async function submitCurrentQuestion() {
-        if (chatSubmissionPending) return;
+      async function submitCurrentQuestion({ expectSpeech = false, requestId = null } = {}) {
+        if (chatSubmissionPending || isCaptureStopping) return;
         if (!whysperAPI || !whysperAPI.sendChatMessage) return;
         chatSubmissionPending = true;
+        const captureRequestId = activeRequestId;
+        const captureSessionId = captureRequestId && captureRequestId !== requestId ? captureRequestId : null;
+        const submissionRequestId = requestId || (expectSpeech ? captureRequestId : null) || crypto.randomUUID();
+        expectSpeech = expectSpeech || Boolean(captureRequestId);
+        let text = '';
         try {
-          // Submit defines the audio boundary. Finalize everything received so
-          // far without stopping the live system loopback stream.
+          if ((isRecording || isCaptureStarting) && captureRequestId) {
+            await stopCapture();
+          }
+          if (captureRequestId && micButton) micButton.disabled = true;
           const speechBoundary = whysperAPI.flushSpeechForSubmit
-            ? await whysperAPI.flushSpeechForSubmit()
+            ? await whysperAPI.flushSpeechForSubmit(requestId || captureSessionId || submissionRequestId)
             : { transcripts: [], throughId: 0 };
           const selectedText = window.getSelection ? window.getSelection().toString().trim() : '';
           const typedText = (messageInput.value || '').trim() || selectedText;
           const transcriptText = Array.isArray(speechBoundary.transcripts)
             ? speechBoundary.transcripts.join('\n')
             : '';
-          const text = [typedText, transcriptText].filter(Boolean).join('\n\n');
-          if (!text) return;
+          text = [typedText, transcriptText].filter(Boolean).join('\n\n');
+          if (!text) {
+            if (expectSpeech) addMessage('No speech was recognized. Try listening again.', 'system');
+            if (activeRequestId === captureRequestId) activeRequestId = null;
+            return;
+          }
           addMessage(text, 'user');
+          lastSubmittedQuestion = text;
           messageInput.value = '';
           autoGrow(messageInput);
           showThinkingIndicator();
-          await whysperAPI.sendChatMessage(text, speechBoundary.throughId || 0);
+          const result = await whysperAPI.sendChatMessage(
+            text,
+            speechBoundary.throughId || 0,
+            speechBoundary.transcriptionProcessingMs,
+            submissionRequestId,
+            captureSessionId
+          );
+          if ((!result || result.success !== false) && activeRequestId === captureRequestId) {
+            activeRequestId = null;
+          }
+          if (result && result.success === false) {
+            hideThinkingIndicator();
+            addMessage('The message could not be submitted. Please try again.', 'error');
+            if (!messageInput.value.trim()) messageInput.value = text;
+            autoGrow(messageInput);
+            lastSubmittedQuestion = '';
+          }
         } catch (error) {
           console.error('Failed to send chat message to main process:', error);
+          hideThinkingIndicator();
+          addMessage(`Message submission failed: ${error.message || error}`, 'error');
+          if (!messageInput.value.trim()) messageInput.value = text;
+          autoGrow(messageInput);
+          lastSubmittedQuestion = '';
         } finally {
           chatSubmissionPending = false;
+          if (captureRequestId && micButton) micButton.disabled = false;
         }
       }
 
@@ -1297,7 +1472,7 @@
 
       // Initialize
       if (!chatHistory || chatHistory.length === 0) {
-        addMessage('Audio is off. Click the microphone or press Alt+R to start listening.', 'system');
+        addMessage('Click the microphone or press Alt+R to start listening. Stop listening, then click Submit to send.', 'system');
       }
     </script>
   </body>

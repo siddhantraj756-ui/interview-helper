@@ -27,6 +27,8 @@ class MainWindowUI {
         this._captureActive = false;
         this._captureRequestPending = false;
         this._captureRetryRequested = false;
+        this._audioRequestId = null;
+        this._captureRequestId = null;
         
         // Define available skills for navigation
         this.availableSkills = [
@@ -318,20 +320,7 @@ class MainWindowUI {
         // Add click handler for microphone
         this.micButton.addEventListener('click', async () => {
             if (this.isInteractive && this.speechAvailable) {
-                try {
-                    if (this.isRecording || this._captureStarting) {
-                        await window.electronAPI.stopSpeechRecognition();
-                    } else {
-                        await window.electronAPI.startSpeechRecognition();
-                    }
-                } catch (error) {
-                    logger.error('Speech recognition toggle failed', {
-                        component: 'MainWindowUI',
-                        error: error.message
-                    });
-                    this.isRecording = false;
-                    this.updateMicButtonState();
-                }
+                await this.toggleAudioCapture();
             } else if (this.isInteractive && !this.speechAvailable) {
                 logger.warn('Mic clicked but speech recognition is not available', {
                     component: 'MainWindowUI'
@@ -434,8 +423,9 @@ class MainWindowUI {
                 this.handleRecordingStarted();
             });
 
-            window.electronAPI.onSystemAudioCaptureRequested(() => {
-                this._startRendererAudioCapture();
+            window.electronAPI.onSystemAudioCaptureRequested((_event, data) => {
+                this._captureRequestId = data && data.requestId || this._audioRequestId;
+                this._startRendererAudioCapture(this._captureRequestId);
             });
 
             window.electronAPI.onRecordingStopped(() => {
@@ -480,11 +470,7 @@ class MainWindowUI {
                 if (e.altKey && e.key === 'r' && this.isInteractive) {
                     e.preventDefault();
                     if (!this.speechAvailable) return; // guard when unavailable
-                    if (this.isRecording || this._captureStarting) {
-                        window.electronAPI.stopSpeechRecognition();
-                    } else {
-                        window.electronAPI.startSpeechRecognition();
-                    }
+                    this.toggleAudioCapture();
                 }
             });
         }
@@ -664,14 +650,39 @@ class MainWindowUI {
             this.micButton.classList.remove('recording');
         }
         this._stopRendererAudioCapture();
+        if (this._captureRequestId && window.electronAPI?.reportSystemAudioCaptureStopped) {
+            window.electronAPI.reportSystemAudioCaptureStopped(this._captureRequestId);
+        }
+        this._captureRequestId = null;
         logger.debug('Recording stopped', { component: 'MainWindowUI' });
+    }
+
+    async toggleAudioCapture() {
+        try {
+            if (this.isRecording || this._captureStarting) {
+                await window.electronAPI.stopSpeechRecognition(this._audioRequestId);
+                this._audioRequestId = null;
+            } else {
+                this._audioRequestId = crypto.randomUUID();
+                const status = await window.electronAPI.startSpeechRecognition(this._audioRequestId);
+                if (status && !status.isRecording) this._audioRequestId = null;
+            }
+        } catch (error) {
+            logger.error('Speech recognition toggle failed', {
+                component: 'MainWindowUI',
+                error: error.message
+            });
+            this._audioRequestId = null;
+            this.isRecording = false;
+            this.updateMicButtonState();
+        }
     }
 
     /**
      * Capture system-wide output loopback. This intentionally never calls
      * getUserMedia or requests a physical microphone.
      */
-    async _startRendererAudioCapture() {
+    async _startRendererAudioCapture(requestId = this._audioRequestId) {
         let generation = null;
         try {
             if (this._captureRequestPending) {
@@ -775,6 +786,7 @@ class MainWindowUI {
             }
             this._captureActive = true;
             window.electronAPI.reportSystemAudioCaptureReady({
+                requestId,
                 audioRoute: 'Windows system loopback',
                 microphoneRequested: false,
                 audioTrackLabel: audioTrack.label,
