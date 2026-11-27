@@ -9,4 +9,4 @@ bin/
 *.log
 
 # Exclude local interview transcript
-interview.md
+/interview.md
