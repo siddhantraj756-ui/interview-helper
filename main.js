@@ -103,6 +103,7 @@ const llmService = require("./src/services/llm.service");
 const CredentialStore = require("./src/services/credential-store");
 const ProviderManager = require("./src/services/provider-manager");
 const { sumTranscriptionProcessingMs } = require("./src/services/timing");
+const { AudioPerformanceTracker } = require("./src/services/audio-performance");
 const credentialStore = new CredentialStore();
 const providerManager = new ProviderManager({
   geminiService: llmService,
@@ -123,6 +124,7 @@ class ApplicationController {
     this.isReady = false;
     this.starting = false;
     this.activeSkill = "dsa";
+    this.performanceTracker = new AudioPerformanceTracker({ logger });
   // Default to C++ so language is enforced from first run
   this.codingLanguage = "cpp";
     this.speechAvailable = false;
